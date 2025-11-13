@@ -1,0 +1,45 @@
+# Configuration for Transformer Model
+
+model:
+  name: transformer
+  type: TransformerModel
+  params:
+    d_model: 512
+    nhead: 8
+    num_encoder_layers: 3
+    num_decoder_layers: 3
+    dim_feedforward: 2048
+    dropout: 0.1
+
+training:
+  num_epochs: 40
+  batch_size: 32
+  learning_rate: 1e-4
+  weight_decay: 1e-4
+  patience: 5
+  label_smoothing: 0.1
+  clip_grad: 5.0
+
+data:
+  train_captions: data/train_captions.json
+  val_captions: data/val_captions.json
+  eval_captions: data/eval_captions.json
+  train_features_dir: features/mel/
+  val_features_dir: features/mel/
+  eval_features_dir: features/mel_eval/
+  vocab_path: vocab.json
+  max_caption_length: 30
+  mel_length: 3000
+  num_workers: 4
+
+evaluation:
+  num_samples: 100
+  sample_generation_freq: 5  # Generate samples every N epochs
+
+paths:
+  checkpoint_dir: checkpoints
+  results_dir: results
+  best_model_name: best_transformer.pth
+
+seed: 42
+device: cuda  # cuda or cpu
