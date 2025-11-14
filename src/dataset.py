@@ -2,6 +2,9 @@
 Dataset class for audio captioning
 Handles loading mel spectrograms and captions
 """
+import sys, os
+project_root = os.path.abspath("..")
+sys.path.append(project_root)
 
 import torch
 from torch.utils.data import Dataset

@@ -6,8 +6,10 @@ import sys
 import json
 from pathlib import Path
 
-# Add src to path
-sys.path.append(str(Path(__file__).parent.parent))
+# Add parent directory to path
+script_dir = Path(__file__).parent.absolute()
+project_root = script_dir.parent
+sys.path.insert(0, str(project_root))
 
 import torch
 from src.models import create_model

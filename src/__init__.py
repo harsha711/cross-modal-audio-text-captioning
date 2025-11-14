@@ -3,6 +3,10 @@ Audio Captioning Package
 Cross-model audio text captioning system with multiple architectures
 """
 
+import sys, os
+project_root = os.path.abspath("..")
+sys.path.append(project_root)
+
 from .models import (
     BaselineModel,
     ImprovedBaselineModel,

@@ -2,6 +2,8 @@
 Utility functions for audio captioning project
 Includes vocabulary building, visualization, and helper functions
 """
+import sys
+sys.path.append('..')
 
 import json
 import numpy as np
@@ -326,6 +328,54 @@ def print_model_summary(models_dict):
         print(f"{name:<25} {total:>19,} {trainable:>19,}")
 
     print("="*80)
+
+def make_json_serializable(obj):
+    """
+    Recursively convert obj into JSON-serializable Python objects:
+    - torch.Tensor -> list or scalar
+    - numpy arrays / numpy scalars -> list or Python scalar
+    - bytes -> decode to str
+    - dict/list/tuple -> converted recursively
+    """
+    # Torch tensors
+    if isinstance(obj, torch.Tensor):
+        if obj.numel() == 1:
+            return obj.item()
+        return obj.detach().cpu().numpy().tolist()
+
+    # Numpy scalar
+    if isinstance(obj, (np.generic,)):
+        return obj.item()
+
+    # Numpy array
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+
+    # Python builtins that are fine
+    if isinstance(obj, (str, int, float, bool)) or obj is None:
+        return obj
+
+    # bytes -> decode if possible
+    if isinstance(obj, (bytes, bytearray)):
+        try:
+            return obj.decode()
+        except Exception:
+            return str(obj)
+
+    # dict -> convert values
+    if isinstance(obj, dict):
+        return {make_json_serializable(k): make_json_serializable(v) for k, v in obj.items()}
+
+    # list/tuple/set -> convert elements
+    if isinstance(obj, (list, tuple, set)):
+        return [make_json_serializable(x) for x in obj]
+
+    # fallback: try to use .__dict__ or str()
+    if hasattr(obj, '__dict__'):
+        return make_json_serializable(vars(obj))
+
+    return str(obj)  # last resort
+
 
 
 if __name__ == "__main__":

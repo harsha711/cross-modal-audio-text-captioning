@@ -2,6 +2,9 @@
 Evaluation Metrics for Audio Captioning
 Includes repetition rate, diversity metrics, and model evaluation
 """
+import sys, os
+project_root = os.path.abspath("..")
+sys.path.append(project_root)
 
 import torch
 import numpy as np
@@ -113,13 +116,16 @@ def evaluate_model(model, eval_dataset, vocab, device='cuda', num_samples=None):
         # Get mel spectrogram
         mel = item['mel'].unsqueeze(0).to(device)
 
-        # Generate
+        # Generate with sampling for diversity
         with torch.no_grad():
             ids = model.generate(
                 mel,
                 max_len=30,
                 sos_idx=vocab['<sos>'],
-                eos_idx=vocab['<eos>']
+                eos_idx=vocab['<eos>'],
+                temperature=0.7,  # Add randomness for diversity
+                top_k=50,         # Sample from top 50 tokens
+                top_p=0.9         # Nucleus sampling
             )
 
         # Decode
@@ -238,13 +244,16 @@ def get_sample_predictions(model, eval_dataset, vocab, device='cuda', num_sample
         # Get mel
         mel = item['mel'].unsqueeze(0).to(device)
 
-        # Generate
+        # Generate with sampling for diversity
         with torch.no_grad():
             ids = model.generate(
                 mel,
                 max_len=30,
                 sos_idx=vocab['<sos>'],
-                eos_idx=vocab['<eos>']
+                eos_idx=vocab['<eos>'],
+                temperature=0.7,  # Add randomness for diversity
+                top_k=50,         # Sample from top 50 tokens
+                top_p=0.9         # Nucleus sampling
             )
 
         # Decode

@@ -12,6 +12,7 @@ pandas>=2.0.0
 # Audio Processing
 librosa>=0.10.0
 soundfile>=0.12.0
+aac-datasets>=0.5.0
 
 # Visualization
 matplotlib>=3.7.0
@@ -35,3 +36,9 @@ flake8>=6.0.0
 
 # Optional but recommended
 scikit-learn>=1.3.0
+
+# Reference-based metrics (optional - already implemented from scratch)
+# These packages can provide additional functionality if needed:
+# nltk>=3.8.0  # For better tokenization and stemming
+# rouge-score>=0.1.2  # Alternative ROUGE implementation
+# pycocoevalcap  # MS COCO evaluation tools (BLEU, METEOR, CIDEr, SPICE)

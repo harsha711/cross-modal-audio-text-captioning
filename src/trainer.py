@@ -2,6 +2,9 @@
 Training Script for Audio Captioning Models
 Handles all model levels with proper evaluation
 """
+import sys, os
+project_root = os.path.abspath("..")
+sys.path.append(project_root)
 
 import torch
 import torch.nn as nn
@@ -159,12 +162,13 @@ class ModelTrainer:
         )
 
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.5, patience=2, verbose=True
+            optimizer, mode='min', factor=0.5, patience=2
         )
 
         # Training loop
         best_val_loss = float('inf')
         epochs_without_improvement = 0
+        prev_lr = learning_rate
 
         for epoch in range(num_epochs):
             print(f"\n{'='*60}")
@@ -180,6 +184,11 @@ class ModelTrainer:
             # Update scheduler
             scheduler.step(val_loss)
             current_lr = optimizer.param_groups[0]['lr']
+
+            # Print LR change notification
+            if current_lr != prev_lr:
+                print(f"\n⚡ Learning rate reduced: {prev_lr:.6f} → {current_lr:.6f}")
+                prev_lr = current_lr
 
             # Track metrics
             self.history['train_loss'].append(train_loss)

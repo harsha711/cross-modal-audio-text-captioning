@@ -2,11 +2,59 @@
 Audio Captioning Model Architectures
 Implements 4 progressively complex models for audio captioning
 """
+import sys, os
+project_root = os.path.abspath("..")
+sys.path.append(project_root)
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+
+
+# ============================================================================
+# SAMPLING UTILITIES FOR DIVERSE GENERATION
+# ============================================================================
+
+def sample_with_temperature(logits, temperature=1.0, top_k=0, top_p=0.9):
+    """
+    Sample from logits with temperature, top-k, and top-p (nucleus) filtering
+
+    Args:
+        logits: (batch, vocab_size) raw model outputs
+        temperature: Sampling temperature (higher = more random)
+        top_k: If > 0, only sample from top k tokens
+        top_p: If > 0, nucleus sampling - sample from smallest set with cumulative prob >= p
+
+    Returns:
+        next_token: (batch, 1) sampled token indices
+    """
+    # Apply temperature
+    logits = logits / temperature
+
+    # Apply top-k filtering
+    if top_k > 0:
+        top_k_values = torch.topk(logits, top_k)[0][..., -1, None]
+        logits = torch.where(logits < top_k_values, torch.full_like(logits, -float('Inf')), logits)
+
+    # Apply top-p (nucleus) filtering
+    if top_p > 0.0:
+        sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+        cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+
+        # Remove tokens with cumulative probability above the threshold
+        sorted_indices_to_remove = cumulative_probs > top_p
+        # Keep at least one token
+        sorted_indices_to_remove[..., 0] = 0
+        # Scatter sorted tensors back to original indexing
+        indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
+        logits = logits.masked_fill(indices_to_remove, -float('Inf'))
+
+    # Sample from the filtered distribution
+    probs = F.softmax(logits, dim=-1)
+    next_token = torch.multinomial(probs, num_samples=1)  # (batch, 1)
+
+    return next_token
 
 
 # ============================================================================
@@ -17,31 +65,37 @@ class BaselineModel(nn.Module):
     """
     Simple baseline: CNN encoder + LSTM decoder
     No attention mechanism
+
+    IMPROVEMENTS:
+    - Uses Average Pooling instead of Max Pooling to preserve temporal info
+    - Keeps temporal dimension for better audio representation
+    - Projects to sequence for LSTM processing
     """
     def __init__(self, vocab_size, embed_dim=256, hidden_dim=512, num_layers=2):
         super().__init__()
 
-        # Audio Encoder: Simple CNN to process mel spectrograms
+        # Audio Encoder: CNN to process mel spectrograms with AVERAGE pooling
         self.encoder = nn.Sequential(
             # Input: (batch, 1, 64, 3000) - mel spectrogram
             nn.Conv2d(1, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.MaxPool2d(2, 2),  # -> (batch, 64, 32, 1500)
+            nn.AvgPool2d(2, 2),  # -> (batch, 64, 32, 1500) - AVGPOOL preserves info better
 
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(),
-            nn.MaxPool2d(2, 2),  # -> (batch, 128, 16, 750)
+            nn.AvgPool2d(2, 2),  # -> (batch, 128, 16, 750)
 
             nn.Conv2d(128, 256, kernel_size=3, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU(),
-            nn.MaxPool2d(2, 2),  # -> (batch, 256, 8, 375)
+            nn.AvgPool2d((2, 2)),  # -> (batch, 256, 8, 375)
         )
 
-        # Project CNN output to hidden dimension
-        self.encoder_projection = nn.Linear(256 * 8 * 375, hidden_dim)
+        # Project to sequence representation (keep temporal dimension)
+        # We'll use the time dimension (375) as sequence length
+        self.encoder_projection = nn.Linear(256 * 8, hidden_dim)  # Per-timestep projection
 
         # Text Decoder
         self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=0)
@@ -58,12 +112,22 @@ class BaselineModel(nn.Module):
         self.num_layers = num_layers
 
     def encode_audio(self, mel):
-        """Encode mel spectrogram to fixed representation"""
+        """Encode mel spectrogram to sequence representation preserving temporal info"""
         # mel: (batch, 1, 64, 3000)
         features = self.encoder(mel)  # (batch, 256, 8, 375)
-        features = features.reshape(features.size(0), -1)  # (batch, 256*8*375)
-        audio_encoding = self.encoder_projection(features)  # (batch, hidden_dim)
-        return audio_encoding
+
+        # Reshape to preserve temporal dimension
+        batch_size = features.size(0)
+        features = features.permute(0, 3, 1, 2)  # (batch, 375, 256, 8)
+        features = features.reshape(batch_size, 375, -1)  # (batch, 375, 256*8)
+
+        # Project each timestep
+        audio_encoding = self.encoder_projection(features)  # (batch, 375, hidden_dim)
+
+        # Global average pooling to get single vector for LSTM initialization
+        audio_context = audio_encoding.mean(dim=1)  # (batch, hidden_dim)
+
+        return audio_context
 
     def forward(self, mel, captions):
         """
@@ -87,9 +151,18 @@ class BaselineModel(nn.Module):
 
         return logits
 
-    def generate(self, mel, max_len=30, sos_idx=1, eos_idx=2):
+    def generate(self, mel, max_len=30, sos_idx=1, eos_idx=2, temperature=1.0, top_k=0, top_p=0.9):
         """
-        Generate caption for given audio
+        Generate caption for given audio with sampling for diversity
+
+        Args:
+            mel: Audio mel spectrogram
+            max_len: Maximum caption length
+            sos_idx: Start-of-sequence token index
+            eos_idx: End-of-sequence token index
+            temperature: Sampling temperature (higher = more random, lower = more deterministic)
+            top_k: If > 0, only sample from top k tokens
+            top_p: If > 0, nucleus sampling - sample from smallest set of tokens with cumulative prob >= p
         """
         self.eval()
         batch_size = mel.size(0)
@@ -106,10 +179,10 @@ class BaselineModel(nn.Module):
         for _ in range(max_len):
             embedded = self.embedding(input_token)
             lstm_out, (h, c) = self.decoder_lstm(embedded, (h, c))
-            logits = self.output_projection(lstm_out[:, -1, :])
+            logits = self.output_projection(lstm_out[:, -1, :])  # (batch, vocab_size)
 
-            # Greedy decoding
-            next_token = logits.argmax(dim=-1, keepdim=True)
+            # Sample using temperature and nucleus sampling
+            next_token = sample_with_temperature(logits, temperature, top_k, top_p)
             generated.append(next_token)
 
             # Stop if <eos> token
@@ -135,27 +208,27 @@ class ImprovedBaselineModel(nn.Module):
     def __init__(self, vocab_size, embed_dim=256, hidden_dim=512, num_layers=2):
         super().__init__()
 
-        # Deeper Audio Encoder
+        # Deeper Audio Encoder - Using AvgPool to preserve temporal info
         self.encoder = nn.Sequential(
             nn.Conv2d(1, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.MaxPool2d(2, 2),
+            nn.AvgPool2d(2, 2),
 
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(),
-            nn.MaxPool2d(2, 2),
+            nn.AvgPool2d(2, 2),
 
             nn.Conv2d(128, 256, kernel_size=3, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU(),
-            nn.MaxPool2d(2, 2),
+            nn.AvgPool2d(2, 2),
 
             nn.Conv2d(256, 512, kernel_size=3, padding=1),
             nn.BatchNorm2d(512),
             nn.ReLU(),
-            nn.MaxPool2d(2, 2),  # -> (batch, 512, 4, 187)
+            nn.AvgPool2d(2, 2),  # -> (batch, 512, 4, 187)
         )
 
         # Bidirectional LSTM for temporal modeling
@@ -224,8 +297,8 @@ class ImprovedBaselineModel(nn.Module):
 
         return logits
 
-    def generate(self, mel, max_len=30, sos_idx=1, eos_idx=2):
-        """Generate caption"""
+    def generate(self, mel, max_len=30, sos_idx=1, eos_idx=2, temperature=1.0, top_k=0, top_p=0.9):
+        """Generate caption with sampling for diversity"""
         self.eval()
         batch_size = mel.size(0)
 
@@ -242,7 +315,8 @@ class ImprovedBaselineModel(nn.Module):
             lstm_out, (h, c) = self.decoder_lstm(decoder_input, (h, c))
             logits = self.output_projection(lstm_out[:, -1, :])
 
-            next_token = logits.argmax(dim=-1, keepdim=True)
+            # Sample using temperature and nucleus sampling
+            next_token = sample_with_temperature(logits, temperature, top_k, top_p)
             generated.append(next_token)
 
             if (next_token == eos_idx).all():
@@ -297,27 +371,27 @@ class AttentionModel(nn.Module):
     def __init__(self, vocab_size, embed_dim=256, hidden_dim=512, num_layers=2):
         super().__init__()
 
-        # Audio Encoder
+        # Audio Encoder - Using AvgPool instead of MaxPool to preserve temporal info
         self.encoder_cnn = nn.Sequential(
             nn.Conv2d(1, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.MaxPool2d(2, 2),
+            nn.AvgPool2d(2, 2),
 
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(),
-            nn.MaxPool2d(2, 2),
+            nn.AvgPool2d(2, 2),
 
             nn.Conv2d(128, 256, kernel_size=3, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU(),
-            nn.MaxPool2d(2, 2),
+            nn.AvgPool2d(2, 2),
 
             nn.Conv2d(256, 512, kernel_size=3, padding=1),
             nn.BatchNorm2d(512),
             nn.ReLU(),
-            nn.MaxPool2d(2, 2),
+            nn.AvgPool2d(2, 2),
         )
 
         self.encoder_lstm = nn.LSTM(
@@ -392,8 +466,8 @@ class AttentionModel(nn.Module):
 
         return torch.stack(outputs, dim=1)  # (batch, seq_len, vocab_size)
 
-    def generate(self, mel, max_len=30, sos_idx=1, eos_idx=2):
-        """Generate with attention"""
+    def generate(self, mel, max_len=30, sos_idx=1, eos_idx=2, temperature=1.0, top_k=0, top_p=0.9):
+        """Generate with attention and sampling for diversity"""
         self.eval()
         batch_size = mel.size(0)
 
@@ -418,7 +492,8 @@ class AttentionModel(nn.Module):
             output = torch.cat([lstm_out.squeeze(1), context], dim=-1)
             logits = self.output_projection(output)
 
-            next_token = logits.argmax(dim=-1)
+            # Sample using temperature and nucleus sampling
+            next_token = sample_with_temperature(logits, temperature, top_k, top_p).squeeze(1)
             generated.append(next_token.unsqueeze(1))
 
             if (next_token == eos_idx).all():
@@ -460,27 +535,27 @@ class TransformerModel(nn.Module):
                  num_decoder_layers=3, dim_feedforward=2048, dropout=0.1):
         super().__init__()
 
-        # Audio Encoder CNN
+        # Audio Encoder CNN - Using AvgPool to preserve temporal info
         self.encoder_cnn = nn.Sequential(
             nn.Conv2d(1, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.MaxPool2d(2, 2),
+            nn.AvgPool2d(2, 2),
 
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(),
-            nn.MaxPool2d(2, 2),
+            nn.AvgPool2d(2, 2),
 
             nn.Conv2d(128, 256, kernel_size=3, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU(),
-            nn.MaxPool2d(2, 2),
+            nn.AvgPool2d(2, 2),
 
             nn.Conv2d(256, 512, kernel_size=3, padding=1),
             nn.BatchNorm2d(512),
             nn.ReLU(),
-            nn.MaxPool2d(2, 2),
+            nn.AvgPool2d(2, 2),
         )
 
         self.audio_projection = nn.Linear(512 * 4, d_model)
@@ -553,8 +628,8 @@ class TransformerModel(nn.Module):
 
         return logits
 
-    def generate(self, mel, max_len=30, sos_idx=1, eos_idx=2):
-        """Generate caption autoregressively"""
+    def generate(self, mel, max_len=30, sos_idx=1, eos_idx=2, temperature=1.0, top_k=0, top_p=0.9):
+        """Generate caption autoregressively with sampling for diversity"""
         self.eval()
         batch_size = mel.size(0)
 
@@ -579,9 +654,9 @@ class TransformerModel(nn.Module):
                 tgt_mask=tgt_mask
             )
 
-            # Get next token
+            # Get next token using sampling
             logits = self.output_projection(output[:, -1, :])
-            next_token = logits.argmax(dim=-1, keepdim=True)
+            next_token = sample_with_temperature(logits, temperature, top_k, top_p)
 
             # Append
             generated = torch.cat([generated, next_token], dim=1)

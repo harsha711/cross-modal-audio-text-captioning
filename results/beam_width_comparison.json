@@ -1,0 +1,54 @@
+{
+  "beam_1": {
+    "num_samples": 50,
+    "beam_width": 1,
+    "length_penalty": 0.6,
+    "avg_repetition_rate": 0.23713554239018633,
+    "vocabulary_diversity": 0.13814756671899528,
+    "unique_words_used": 88,
+    "total_words_generated": 637,
+    "mean_caption_length": 12.74,
+    "std_caption_length": 3.6376365953734298,
+    "min_caption_length": 8,
+    "max_caption_length": 30
+  },
+  "beam_3": {
+    "num_samples": 50,
+    "beam_width": 3,
+    "length_penalty": 0.6,
+    "avg_repetition_rate": 0.09656926406926405,
+    "vocabulary_diversity": 0.1956521739130435,
+    "unique_words_used": 90,
+    "total_words_generated": 460,
+    "mean_caption_length": 9.2,
+    "std_caption_length": 2.0199009876724157,
+    "min_caption_length": 6,
+    "max_caption_length": 14
+  },
+  "beam_5": {
+    "num_samples": 50,
+    "beam_width": 5,
+    "length_penalty": 0.6,
+    "avg_repetition_rate": 0.07787662337662338,
+    "vocabulary_diversity": 0.16783216783216784,
+    "unique_words_used": 72,
+    "total_words_generated": 429,
+    "mean_caption_length": 8.58,
+    "std_caption_length": 1.5885842753848471,
+    "min_caption_length": 6,
+    "max_caption_length": 14
+  },
+  "beam_10": {
+    "num_samples": 50,
+    "beam_width": 10,
+    "length_penalty": 0.6,
+    "avg_repetition_rate": 0.06481818181818183,
+    "vocabulary_diversity": 0.14925373134328357,
+    "unique_words_used": 60,
+    "total_words_generated": 402,
+    "mean_caption_length": 8.04,
+    "std_caption_length": 1.45547243189282,
+    "min_caption_length": 6,
+    "max_caption_length": 12
+  }
+}
