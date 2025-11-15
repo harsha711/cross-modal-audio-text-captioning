@@ -1,0 +1,11 @@
+{
+  "num_samples": 100,
+  "avg_repetition_rate": 0.13251958254164134,
+  "vocabulary_diversity": 0.2128755364806867,
+  "unique_words_used": 248,
+  "total_words_generated": 1165,
+  "mean_caption_length": 11.65,
+  "std_caption_length": 2.547057125390006,
+  "min_caption_length": 8,
+  "max_caption_length": 21
+}
